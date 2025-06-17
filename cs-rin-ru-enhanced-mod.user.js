@@ -163,9 +163,9 @@ let color = {
     "color_of_friends": '#f4169b', "color_of_me": '#ff4c4c'
 };
 
-/*
-Functions that need to be connected must be added here and you must also add the need-connected="true" tag to them.
-*/
+
+// if need to be connected it be added here and you also add the need-connected="true" tag
+
 function loadConfig() {
     const savedOptions = GM_getValue("options", options);
     options = {...options, ...savedOptions};
@@ -180,6 +180,69 @@ function loadConfig() {
     }
 }
 
+/*
+# ==============================================================================
+#  Debug shit
+# ==============================================================================
+*/
+const LOG_CONFIG = {
+    debugMode: true,
+    colors: {
+        DEBUG: '#888',
+        INFO: '#4CAF50',
+        WARN: '#FFA726',
+        ERROR: '#EF5350'
+    }
+};
+
+const logger = (() => {
+    const moduleName = 'CS.RIN.RU Enhanced';
+
+    function _formatArgs(args) {
+        return args.map(arg => {
+            if (typeof arg === 'object' && arg !== null) {
+                try {
+                    return JSON.stringify(arg, null, 2);
+                } catch (e) {
+                    return Object.prototype.toString.call(arg);
+                }
+            }
+            return arg;
+        });
+    }
+
+    function _getTimestamp() {
+        const now = new Date();
+        return `[${now.toLocaleTimeString()}]`;
+    }
+
+    function _log(level, args, functionName = '') {
+        if (!LOG_CONFIG.debugMode && level === 'DEBUG') return;
+
+        const formattedArgs = _formatArgs(Array.from(args));
+        const timestamp = _getTimestamp();
+        const color = LOG_CONFIG.colors[level] || '#FFF';
+
+        let prefix = `%c${timestamp} [${moduleName}]`;
+        if (functionName) prefix += ` [${functionName}]`;
+        prefix += ` [${level}]`;
+
+        const style = `color: ${color}; font-weight: bold;`;
+        console[level.toLowerCase()]?.(prefix, style, ...formattedArgs);
+    }
+
+    return {
+        debug(...args) {
+            _log('DEBUG', args, this?.caller?.name || 'previewElement');
+        },
+        info(...args) {
+            _log('INFO', args, this?.caller?.name || 'previewElement');
+        }
+    };
+})();
+
+
+
 loadConfig();
 
 window.addEventListener("message", receiveConfigMessage, false);
@@ -192,12 +255,18 @@ function receiveConfigMessage(event) {
     GM_notification("Configuration saved", "Info");
 }
 
+// Modified function from the original code
 function loadConfigButton() {
-    GM_xmlhttpRequest({ // JS of config file
-        url: CONFIG_PAGE_JS, onerror: (r) => {
-            console.log("Error loading config page script: " + r);
-            GM_notification("Error loading config page script: " + r, "Error");
-        }, onload: (r) => {
+    logger.info('Loading config');
+
+    GM_xmlhttpRequest({
+        url: CONFIG_PAGE_JS,
+        onerror: (r) => {
+            logger.networkError('loadConfigButton', r);
+            logger.warn('Fallback to cached config');
+        },
+        onload: (r) => {
+            logger.debug('Config load success');
             const script = document.createElement('script');
             script.textContent = r.responseText;
             $("body").append(script);
@@ -505,29 +574,33 @@ function startUpdating() {
     }, 60000);
 }
 
-function dynamicFunction(data) {
-    if (data == null) {
-        $.get(location.href, function (data) { //Every 60 seconds we update time and user list
-            dynamicFunction(data);
-        });
-    }
-    //Call every 60seconds as well as when using infinite scroll
-    $("#datebar .gensmall+ .gensmall").html($("#datebar .gensmall+ .gensmall", data).html()); //Time
-    $("#wrapcentre > .tablebg").last().html($("#wrapcentre > .tablebg", data).last().html()); //Users
-    const html = $("#menubar > table:nth-child(3) > tbody > tr > td:nth-child(1) > a:nth-child(2)", data).html();
-    if ($(html)[0].src.endsWith("theme/images/icon_mini_message.gif")) {
-        $("#menubar > table:nth-child(3) > tbody > tr > td:nth-child(1) > a:nth-child(" + (2 + options.add_profile_button) + ")").html(html) // Message
-    }
-    changeColorOfNewMessage();//Colorize messages
-    colorizeFriendsMe();
-    if (URLContains("viewtopic.php")) { //Dynamics posts
-        /*
+// Usage in async functions
+async function dynamicFunction(data) {
+    logger.debug('Refreshing dynamic content', {
+        timestamp: Date.now(),
+        hasData: !!data
+    });
+
+    try {
+        //Call every 60seconds as well as when using infinite scroll
+        $("#datebar .gensmall+ .gensmall").html($("#datebar .gensmall+ .gensmall", data).html()); //Time
+        $("#wrapcentre > .tablebg").last().html($("#wrapcentre > .tablebg", data).last().html()); //Users
+        const html = $("#menubar > table:nth-child(3) > tbody > tr > td:nth-child(1) > a:nth-child(2)", data).html();
+        if ($(html)[0].src.endsWith("theme/images/icon_mini_message.gif")) {
+            $("#menubar > table:nth-child(3) > tbody > tr > td:nth-child(1) > a:nth-child(" + (2 + options.add_profile_button) + ")").html(html) // Message
+        }
+        changeColorOfNewMessage();//Colorize messages
+        colorizeFriendsMe();
+        if (URLContains("viewtopic.php")) { //Dynamics posts
+            /*
         var actualPostsOnThePage = $("#pagecontent > .tablebg:not(:first, :last)").length;
         var postsOnThePageAfterActualisation = $("#pagecontent > .tablebg:not(:first, :last)", data).length;
         var differenceBetweenBoth=postsOnThePageAfterActualisation-actualPostsOnThePage;
         //W.I.P
         */
-        //I don't know what I tried to do, but I don't think it's a good solution.
+            //I don't know what I tried to do, but I don't think it's a good solution.
+        }} catch (error) {
+            logger.error('Dynamic refresh failed', error);
     }
 }
 
@@ -693,37 +766,86 @@ Made by SubZeroPL
 displays preview of first post from topic that mouse cursor points
 */
 
+// Configuration
+const optionss = {
+    topic_preview: true,
+    topic_preview_option: 0, // 0=first post, 1=unread, 2=last post
+    topic_preview_timeout: 2, // seconds
+    post_preview: true,
+    steam_db_link: true
+};
 /*
  * Displays a preview of the post.
  * @param {HTMLElement} element - The element to attach the hover event listener to.
  * @param {string} link - The link to the topic to be previewed.
  * @param {function} getIndex - A predefined function that returns the correct index of the post given a list of posts.
- * These are defined `setup{Type}Preview()` functions.
-*/
+ */
 function previewElement(element, link, getIndex) {
     let tid, showPreview;
+
+    logger.debug('Init preview for element', {
+        elementTag: element.tagName,
+        elementClass: element.className,
+        link,
+        hasIndexFunction: !!getIndex
+    });
     $(element).off("mouseover").on("mouseover", () => {
         showPreview = true;
         $("div#topic_preview").hide();
         tid = setTimeout(() => {
             if (!showPreview) return;
-
+            logger.debug('Start preview load', {
+                link,
+                timeout: optionss.topic_preview_timeout * 1000
+            });
             const previewWidth = window.innerWidth * 0.75;
             const previewHeight = window.innerHeight * 0.75;
             const x = (window.innerWidth / 2) - (previewWidth / 2);
             const y = (window.innerHeight / 2) - (previewHeight / 2) + window.scrollY;
-
             GM_xmlhttpRequest({
-                url: link, onerror: (r) => {
-                    console.log("Error loading page: " + r);
-                }, onload: (r) => {
+                method: "GET",
+                url: link,
+                onerror: (r) => {
+                    logger.error('Failed to load pg', {
+                        status: r.status,
+                        statusText: r.statusText,
+                        url: link
+                    });
+                },
+                onload: (r) => {
                     if (!showPreview) return;
                     const parser = new DOMParser();
                     const dom = parser.parseFromString(r.responseText, "text/html").body.children;
                     const posts = $(dom).find("div#pagecontent table.tablebg");
-                    const body = posts[getIndex(posts, link)].outerHTML;
+
+                    logger.debug('Found posts', {
+                        postCount: posts.length,
+                        sampleHTML: posts[0]?.outerHTML.substring(0, 200) + '...'
+                    });
+                    if (posts.length === 0) {
+                        logger.warn('No posts found', { link });
+                        return;
+                    }
+                    const postIndex = getIndex(posts, link);
+
+                    logger.debug('Using post index', {
+                        index: postIndex,
+                        postCount: posts.length,
+                        link
+                    });
+                    if (postIndex < 0 || postIndex >= posts.length) {
+                        logger.warn('Invalid post index', {
+                            index: postIndex,
+                            postCount: posts.length,
+                            link
+                        });
+                        return;
+                    }
+                    const body = posts[postIndex].outerHTML;
+
                     // Use custom parseHTML function instead of $.parseHTML
                     const bodyObj = parser.parseFromString(body, "text/html").body.children[0];
+
                     if ($("div#topic_preview").length > 0) {
                         const tip = $("div#topic_preview");
                         tip.html(bodyObj);
@@ -755,24 +877,38 @@ function previewElement(element, link, getIndex) {
                     steamDBLink();
                 }
             });
-        }, options.topic_preview_timeout * 1000);
+        }, optionss.topic_preview_timeout * 1000);
     });
+
     $(element).off("mouseleave").on("mouseleave", () => {
         clearTimeout(tid);
         showPreview = false;
     });
 }
 
+
 function setupTopicPreview() {
-    if (!options.topic_preview) return;
+    if (!optionss.topic_preview) return;
+
+    logger.info('setup topic preview', {
+        topicPreviewOption: optionss.topic_preview_option
+    });
     $("a.topictitle").each((_, e) => {
         const topic = $(e)[0];
         const topicLink = topic.href.split("&view=unread")[0].split("&p=")[0];
-        let link = options.topic_preview_option === 0 ? topicLink :
-            options.topic_preview_option === 1 ? topicLink + "&view=unread#unread" :
-                options.topic_preview_option === 2 ? $(topic).parent().next().next().next().next().children().next().children().next().attr("href") :
-                    'Invalid option';
-        const getIndex = () => options.topic_preview_option === 2 ? posts.length - 2 : 1;
+        let link = optionss.topic_preview_option === 0 ? topicLink :
+            optionss.topic_preview_option === 1 ? topicLink + "&view=unread#unread" :
+            optionss.topic_preview_option === 2 ? $(topic).parent().next().next().next().next().children().next().children().next().attr("href") :
+                'Invalid option';
+
+        logger.debug('Process topic', {
+            topicText: topic.textContent.trim(),
+            processedLink: link
+        });
+        const getIndex = (posts) => {
+            return optionss.topic_preview_option === 2 ? posts.length - 2 : 1;
+        };
+
         previewElement(topic, link, getIndex);
     });
 }
@@ -780,29 +916,39 @@ function setupTopicPreview() {
 setupTopicPreview();
 
 function setupPostPreview() {
-    if (!options.post_preview) return;
+    if (!optionss.post_preview) return;
+
+    logger.info('Setup post previews');
+
     $("a.postlink-local").each((_, e) => {
-        const post = $(e)[0]
+        const post = $(e)[0];
         const link = post.href;
+
+        logger.debug('Process post url', {
+            postText: post.textContent.trim(),
+            postLink: link
+        });
+
         if (!link.includes("viewtopic.php")) return;
+
         const getIndex = (posts, link) => {
             for (let i = 0; i < posts.length; i++) {
-                const postLink = $(posts[i]).find("a[href*='viewtopic.php']:not([class])")[0]
-                if (postLink.href === link) {
+                const postLink = $(posts[i]).find("a[href*='viewtopic.php']:not([class])")[0];
+                if (postLink && postLink.href === link) {
                     return i;
                 }
             }
             return -1;
-        }
+        };
 
-        previewElement(post, link, getIndex)
+        previewElement(post, link, getIndex);
     });
 }
 
 setupPostPreview()
 
 function setupProfilePreview() {
-    if (!options.profile_preview) return;
+    if (!optionss.profile_preview) return;
     $("a.postlink-local").each((_, e) => {
         const profile = $(e)[0]
         const link = profile.href;
